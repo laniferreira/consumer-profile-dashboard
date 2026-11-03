@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Send a date-limited browsing history selection to your local Consumer Intelligence Lab dashboard.",
   "permissions": ["history"],
+  "background": {"service_worker": "worker.js"},
   "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
   "content_scripts": [{
     "matches": ["https://laniferreira.github.io/consumer-profile-dashboard/*", "http://localhost:5173/*"],
