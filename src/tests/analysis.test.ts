@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -59,7 +59,7 @@ describe('local analysis safety and imports', () => {
         addEventListener: (_: string, fn: (event: any) => void) => { listener = fn; },
         postMessage: (message: any, target: string) => { reply = { message, target }; },
       },
-      chrome: { history: { search: async (options: any) => { queries++; return [{ url: 'https://example.test/', title: 'Test', lastVisitTime: options.startTime + 5 }]; } } },
+      chrome: { runtime: { lastError: null, sendMessage: (message: any, callback: (reply: any) => void) => { queries++; callback({ records: [{ url: 'https://example.test/', title: 'Test', date: '', visitCount: 1, source: 'Chrome history' }] }); } } },
       Date, Math, Number, String,
     };
     runInNewContext(readFileSync(resolve('extension/bridge.js'), 'utf8'), context);
@@ -71,15 +71,36 @@ describe('local analysis safety and imports', () => {
     expect(queries).toBe(1);
     expect(reply.target).toBe('http://localhost:5173');
     expect(reply.message.records[0].source).toBe('Chrome history');
+    expect(queries).toBe(1);
   });
 
   it('declares only the history API and exact dashboard match patterns', () => {
     const manifest = JSON.parse(readFileSync(resolve('extension/manifest.json'), 'utf8'));
     expect(manifest.permissions).toEqual(['history']);
     expect(manifest.host_permissions).toBeUndefined();
+    expect(manifest.background.service_worker).toBe('worker.js');
     expect(manifest.content_scripts[0].matches).toEqual([
       'https://laniferreira.github.io/consumer-profile-dashboard/*',
       'http://localhost:5173/*',
     ]);
+  });
+
+  it('only lets dashboard content ask the worker to query the selected history period', async () => {
+    let listener: ((message: any, sender: any, reply: (result: any) => void) => boolean | void) | undefined;
+    let options: any;
+    const context = {
+      chrome: {
+        runtime: { onMessage: { addListener: (fn: typeof listener) => { listener = fn; } } },
+        history: { search: async (value: any) => { options = value; return [{ url: 'https://example.test/', title: 'Test', lastVisitTime: value.startTime + 1, visitCount: 2 }]; } },
+      },
+      URL, Date, Math, Number, String,
+    };
+    runInNewContext(readFileSync(resolve('extension/worker.js'), 'utf8'), context);
+    const reply = vi.fn();
+    expect(listener?.({ type: 'QUERY_SELECTED_HISTORY', days: 30 }, { url: 'https://evil.test/' }, reply)).toBeUndefined();
+    expect(listener?.({ type: 'QUERY_SELECTED_HISTORY', days: 30 }, { url: 'https://laniferreira.github.io/consumer-profile-dashboard/' }, reply)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(options.startTime).toBeGreaterThan(0);
+    expect(reply.mock.calls[0][0].records[0].source).toBe('Chrome history');
   });
 });
